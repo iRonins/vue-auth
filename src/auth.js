@@ -51,9 +51,12 @@ module.exports = function () {
                 return cb.call(this);
             }
 
-            this.watch.authenticated = false
             if (this.options.fetchData.enabled) {
+                this.watch.authenticated = false
                 this.options.fetchPerform.call(this, {success: cb, error: cb});
+            } else {
+                this.watch.authenticated = true
+                cb.call(this);
             }
         } else {
             this.watch.loaded = true;
@@ -356,7 +359,7 @@ module.exports = function () {
 
         rolesVar:          'roles',
         tokenName:         'auth-token',
-        
+
         // Objects
 
         authRedirect:       {path: '/login'},
@@ -430,7 +433,7 @@ module.exports = function () {
 
     function Auth(Vue, options) {
         var i, ii, msg, drivers = ['auth', 'http', 'router'];
-        
+
         this.currentToken = null;
 
         this.options = __utils.extend(defaultOptions, [options || {}]);
@@ -540,7 +543,7 @@ module.exports = function () {
 
     Auth.prototype.oauth2 = function (data) {
         __bindContext.call(this, 'oauth2', data);
-    }    
+    }
 
     return Auth;
 };
