@@ -13,14 +13,14 @@ module.exports = {
             if (req) { req.call(_this, request); }
             
             next(function (response) {
-                if (res) { res.call(_this, response); }
+                if (res) { res.call(_this, response, request); }
             });
         });
     },
 
-    _invalidToken: function (res) {
+    _invalidToken: function (res, transition) {
         if (res.status === 401) {
-            this.options.logoutProcess.call(this, res, {redirect: this.options.authRedirect});
+            return true;
         }
     },
 
@@ -29,7 +29,11 @@ module.exports = {
     },
 
     _http: function (data) {
-        this.options.Vue.http(data).then(data.success, data.error);
+        var http = this.options.Vue.http(data);
+
+        http.then(data.success, data.error);
+
+        return http;
     },
 
     _getHeaders: function (res) {

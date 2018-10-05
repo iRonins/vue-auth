@@ -8,7 +8,7 @@ module.exports = function () {
 
     var __transitionPrev = null,
         __transitionThis = null,
-        __transitionRedirecType = null;
+        __transitionRedirectType = null;
 
     function __duckPunch(methodName, data) {
         var _this = this,
@@ -22,31 +22,23 @@ module.exports = function () {
             _this.options[methodName + 'Process'].call(_this, res, data);
         };
 
-        this.options.http._http.call(this, data);
+        return this.options.http._http.call(this, data);
     }
 
     function __bindContext(methodName, data) {
         var _auth = this.$auth;
 
-        _auth.options[methodName + 'Perform'].call(_auth, _auth.options.router._bindData.call(_auth, data, this));
+        return _auth.options[methodName + 'Perform'].call(_auth, _auth.options.router._bindData.call(_auth, data, this));
     }
 
     // Overrideable
 
-    function _routerBeforeEach(cb) {
-        if (this.watch.authenticated && !__token.get.call(this)) {
-            this.options.logoutProcess.call(this, null, {});
-        }
-
-        if (this.options.refreshData.enabled && this.options.tokenExpired.call(this)) {
-            this.options.refreshPerform.call(this, {});
-        }
-
+    function _checkAuthenticated(cb) {
         if (this.watch.authenticated === null && __token.get.call(this)) {
             if ( ! __cookie.exists.call(this)) {
                 this.options.logoutProcess.call(this, null, {});
 
-                this.watch.loaded = true
+                this.watch.loaded = true;
 
                 return cb.call(this);
             }
@@ -64,42 +56,74 @@ module.exports = function () {
         }
     }
 
+    function _routerBeforeEach(cb) {
+        var _this = this;
+
+        if (this.watch.authenticated && !__token.get.call(this)) {
+            this.options.logoutProcess.call(this, null, {});
+        }
+
+        if (this.options.refreshData.enabled && ! this.watch.loaded && __token.get.call(this)) {
+            this.options.refreshPerform.call(this, {
+                success: function () {
+                    this.options.checkAuthenticated.call(_this, cb);
+                }
+            });
+
+            return;
+        }
+
+        _checkAuthenticated.call(this, cb);
+    }
+
     function _transitionEach(transition, routeAuth, cb) {
-        routeAuth = __utils.toArray(routeAuth);
-        
-        __transitionPrev = __transitionThis;
-        __transitionThis = transition;
-        
-        if (routeAuth && (routeAuth === true || routeAuth.constructor === Array)) {
+        var authRedirect = (routeAuth || '').redirect || this.options.authRedirect,
+            forbiddenRedirect = (routeAuth || '').forbiddenRedirect || (routeAuth || '').redirect || this.options.forbiddenRedirect,
+            notFoundRedirect = (routeAuth || '').redirect || this.options.notFoundRedirect;
+
+        routeAuth = __utils.toArray((routeAuth || '').roles !== undefined ? routeAuth.roles : routeAuth);
+
+        if (routeAuth && (routeAuth === true || routeAuth.constructor === Array || __utils.isObject(routeAuth))) {
             if ( ! this.check()) {
-                __transitionRedirecType = 401;
-                cb.call(this, this.options.authRedirect);
+                __transitionRedirectType = 401;
+                cb.call(this, authRedirect);
             }
-            else if (routeAuth.constructor === Array && ! __utils.compare(routeAuth, this.watch.data[this.options.rolesVar])) {
-                __transitionRedirecType = 403;
-                cb.call(this, this.options.forbiddenRedirect);
+            else if ((routeAuth.constructor === Array || __utils.isObject(routeAuth)) && ! __utils.compare(routeAuth, this.watch.data[this.options.rolesVar])) {
+                __transitionRedirectType = 403;
+                cb.call(this, forbiddenRedirect);
             }
             else {
-                this.watch.redirect = __transitionRedirecType ? {type: __transitionRedirecType, from: __transitionPrev, to: __transitionThis} : null;
-                __transitionRedirecType = null;
+                this.watch.redirect = __transitionRedirectType ? {type: __transitionRedirectType, from: __transitionPrev, to: __transitionThis} : null;
+                __transitionRedirectType = null;
 
                 return cb();
             }
         }
         else if (routeAuth === false && this.check()) {
-            __transitionRedirecType = 404;
-            cb.call(this, this.options.notFoundRedirect);
+            __transitionRedirectType = 404;
+            cb.call(this, notFoundRedirect);
         }
         else {
-            this.watch.redirect = __transitionRedirecType ? {type: __transitionRedirecType, from: __transitionPrev, to: __transitionThis} : null;
-            __transitionRedirecType = null;
+            this.watch.redirect = __transitionRedirectType ? {type: __transitionRedirectType, from: __transitionPrev, to: __transitionThis} : null;
+            __transitionRedirectType = null;
 
             return cb();
         }
     }
 
     function _requestIntercept(req) {
-        var token = __token.get.call(this);
+        var token,
+            tokenName;
+
+        if (req.ignoreVueAuth) {
+            return req;
+        }
+
+        if (req.impersonating === false && this.impersonating()) {
+            tokenName = this.options.tokenDefaultName;
+        }
+
+        token = __token.get.call(this, tokenName);
 
         if (token) {
             this.options.auth.request.call(this, req, token);
@@ -108,12 +132,14 @@ module.exports = function () {
         return req;
     }
 
-    function _responseIntercept(res) {
+    function _responseIntercept(res, req) {
         var token;
 
-        if (this.watch.authenticated && this.options.http._invalidToken) {
-            this.options.http._invalidToken.call(this, res);
+        if (req && req.ignoreVueAuth) {
+            return;
         }
+
+        _processInvalidToken.call(this, res, __transitionThis);
 
         token = this.options.auth.response.call(this, res);
 
@@ -130,10 +156,10 @@ module.exports = function () {
         return JSON.parse(decodeURIComponent(data));
     }
 
-    function _check(role) {
+    function _check(role, key) {
         if (this.watch.authenticated === true) {
             if (role) {
-                return __utils.compare(role, this.watch.data[this.options.rolesVar]);
+                return __utils.compare(role, this.watch.data[key || this.options.rolesVar]);
             }
 
             return true;
@@ -143,7 +169,7 @@ module.exports = function () {
     }
 
     function _tokenExpired () {
-        return ! this.watch.loaded && __token.get.call(this);
+        return ! __token.get.call(this);
     }
 
     function _cookieDomain () {
@@ -156,6 +182,68 @@ module.exports = function () {
         return window.location.protocol + '//' + window.location.hostname + (port ? ':' + port : '')
     }
 
+    function _getAuthMeta (transition) {
+        var auth,
+            authRoutes;
+
+        if (transition.to) {
+            auth = transition.to.auth;
+        } else {
+            authRoutes = transition.matched.filter(function (route) {
+                return route.meta.hasOwnProperty('auth');
+            });
+
+            // matches the nested route, the last one in the list
+            if (authRoutes.length) {
+                auth = authRoutes[authRoutes.length - 1].meta.auth;
+            }
+        }
+
+        return auth;
+    }
+
+    function _setTransitions (transition) {
+        __transitionPrev = __transitionThis;
+        __transitionThis = transition;
+    }
+
+    function _processInvalidToken(res, transition) {
+        var i,
+            auth,
+            query = '',
+            redirect = transition && transition.path;
+
+        // Make sure we also attach any existing
+        // query parameters on the path.
+        if (redirect && transition.query) {
+            for (i in transition.query) {
+                if (transition.query[i]) {
+                    query += '&' + i + '=' + transition.query[i];
+                }
+            }
+
+            redirect += '?' + query.substring(1);
+        }
+
+        if (!this.options.http._invalidToken) {
+            return;
+        }
+
+        if (!this.options.http._invalidToken.call(this, res)) {
+            return;
+        }
+
+        if (transition) {
+            auth = this.options.getAuthMeta(transition);
+        }
+
+        if (auth) {
+            redirect = auth.redirect || this.options.authRedirect;
+        }
+
+        this.options.logoutProcess.call(this, res, {redirect: redirect});
+    }
+
     function _fetchPerform(data) {
         var _this = this,
             error = data.error;
@@ -163,27 +251,32 @@ module.exports = function () {
         data.error = function (res) {
             _this.watch.loaded = true;
 
+            if (_this.options.fetchData.error) { _this.options.fetchData.error.call(_this, res); }
+
             if (error) { error.call(_this, res); }
         };
 
-        if (this.watch.authenticated !== true && !this.options.loginData.fetchUser) {
+        if (this.watch.authenticated !== true && !data.enabled) {
             _fetchProcess.call(this, {}, data);
         }
         else {
-            __duckPunch.call(this, 'fetch', data);
+            return __duckPunch.call(this, 'fetch', data);
         }
     }
 
     function _fetchProcess(res, data) {
         this.watch.authenticated = true;
         this.watch.data = this.options.parseUserData.call(this, this.options.http._httpData.call(this, res));
+
         this.watch.loaded = true;
+
+        if (this.options.fetchData.success) { this.options.fetchData.success.call(this, res); }
 
         if (data.success) { data.success.call(this, res); }
     }
 
     function _refreshPerform(data) {
-        __duckPunch.call(this, 'refresh', data);
+        return __duckPunch.call(this, 'refresh', data);
     }
 
     function _refreshProcess(res, data) {
@@ -191,12 +284,12 @@ module.exports = function () {
     }
 
     function _registerPerform(data) {
-        __duckPunch.call(this, 'register', data);
+        return __duckPunch.call(this, 'register', data);
     }
 
     function _registerProcess(res, data) {
         if (data.autoLogin === true) {
-            data = __utils.extend(data, [this.options.loginData]);
+            data = __utils.extend(data, [this.options.loginData, {redirect: data.redirect}]);
 
             this.options.loginPerform.call(this, data);
         }
@@ -210,17 +303,18 @@ module.exports = function () {
     }
 
     function _loginPerform(data) {
-        __duckPunch.call(this, 'login', data);
+        return __duckPunch.call(this, 'login', data);
     }
 
     function _loginProcess(res, data) {
         var _this = this;
 
-        __cookie.set.call(this, data.rememberMe);
+        __cookie.remember.call(this, data.rememberMe);
 
-        this.authenticated = null;
+        this.watch.authenticated = null;
 
         this.options.fetchPerform.call(this, {
+            enabled: data.fetchUser,
             success: function () {
                 if (data.success) { data.success.call(this, res); }
 
@@ -235,7 +329,7 @@ module.exports = function () {
         data = __utils.extend(this.options.logoutData, [data || {}]);
 
         if (data.makeRequest) {
-            __duckPunch.call(this, 'logout', data);
+            return __duckPunch.call(this, 'logout', data);
         }
         else {
             this.options.logoutProcess.call(this, null, data);
@@ -243,10 +337,13 @@ module.exports = function () {
     }
 
     function _logoutProcess(res, data) {
-        __cookie.delete.call(this);
+        __cookie.remove.call(this, 'rememberMe');
 
-        __token.delete.call(this, 'other');
-        __token.delete.call(this, 'default');
+        __cookie.remove.call(this, this.options.tokenImpersonateName);
+        __cookie.remove.call(this, this.options.tokenDefaultName);
+
+        __token.remove.call(this, this.options.tokenImpersonateName);
+        __token.remove.call(this, this.options.tokenDefaultName);
 
         this.watch.authenticated = false;
         this.watch.data = null;
@@ -258,7 +355,7 @@ module.exports = function () {
         }
     }
 
-    function _loginOtherPerform(data) {
+    function _impersonatePerform(data) {
         var success,
             token = this.token.call(this); // (admin) token
 
@@ -266,22 +363,23 @@ module.exports = function () {
 
         success = data.success;
 
-        data.success = function () {
+        data.success = function (res) {
 
             // Reshuffle tokens here...
-            __token.set.call(this, 'other', this.token.call(this));
-            __token.set.call(this, 'default', token);
+            __token.set.call(this, this.options.tokenImpersonateName, this.token.call(this));
+            __token.set.call(this, this.options.tokenDefaultName, token);
 
-            if (success) { success.call(this); }
+            if (success) { success.call(this, res); }
         };
 
-        __duckPunch.call(this, 'loginOther', data);
+        return __duckPunch.call(this, 'impersonate', data);
     }
 
-    function _loginOtherProcess(res, data) {
+    function _impersonateProcess(res, data) {
         var _this = this;
 
         this.options.fetchPerform.call(this, {
+            enabled: true,
             success: function () {
                 if (data.success) { data.success.call(this, res); }
 
@@ -292,21 +390,22 @@ module.exports = function () {
         });
     }
 
-    function _logoutOtherPerform(data) {
-        data = __utils.extend(this.options.logoutOtherData, [data || {}]);
+    function _unimpersonatePerform(data) {
+        data = __utils.extend(this.options.unimpersonateData, [data || {}]);
 
         if (data.makeRequest) {
-            __duckPunch.call(this, 'logoutOther', data);
+            return __duckPunch.call(this, 'unimpersonate', data);
         }
         else {
-            this.options.logoutOtherProcess.call(this, null, data);
+            this.options.unimpersonateProcess.call(this, null, data);
         }
     }
 
-    function _logoutOtherProcess(res, data) {
-        __token.delete.call(this, 'other');
+    function _unimpersonateProcess(res, data) {
+        __token.remove.call(this, this.options.tokenImpersonateName);
 
         this.options.fetchPerform.call(this, {
+            enabled: true,
             success: function () {
                 if (data.success) { data.success.call(this, res, data); }
 
@@ -318,9 +417,11 @@ module.exports = function () {
     }
 
     function _oauth2Perform(data) {
-        var state = {},
-            params = '',
-            query = {};
+        var key,
+            state = {},
+            params = '';
+
+        data = data || {};
 
         if (data.code === true) {
             data = __utils.extend(this.options[data.provider + 'Data'], [data]);
@@ -340,16 +441,28 @@ module.exports = function () {
 
             this.options.loginPerform.call(this, data);
         } else {
+            data.params = __utils.extend(this.options[data.provider + 'Oauth2Data'].params, [data.params || {}]);
             data = __utils.extend(this.options[data.provider + 'Oauth2Data'], [data]);
 
-            data.redirect = data.redirect.call(this);
+            // Backwards compatibility.
+            data.params.redirect_uri = data.redirect || data.params.redirect_uri;
+            data.params.client_id = data.clientId || data.params.client_id;
+            data.params.response_type = data.response_type || data.params.response_type || 'code';
+            data.params.scope = data.scope || data.params.scope;
+            data.params.state = data.state || data.params.state || {};
 
-            data.state = data.state || {};
-            data.state.rememberMe = data.rememberMe === true;
+            if (typeof data.params.redirect_uri === 'function') {
+                data.params.redirect_uri = data.params.redirect_uri.call(this);
+            }
 
-            params = '?client_id=' + data.clientId + '&redirect_uri=' + data.redirect + '&scope=' + data.scope + '&response_type=code&state=' + encodeURIComponent(JSON.stringify(data.state));
+            data.params.state.rememberMe = data.rememberMe === true;
+            data.params.state = JSON.stringify(data.params.state);
 
-            window.location = data.url + params;
+            for (key in data.params) {
+                params += '&' + key + '=' + encodeURIComponent(data.params[key]);
+            }
+
+            window.location = data.url + '?' + params.substring(1);
         }
     }
 
@@ -357,8 +470,10 @@ module.exports = function () {
 
         // Variables
 
-        rolesVar:          'roles',
-        tokenName:         'auth-token',
+        rolesVar:             'roles',
+        tokenImpersonateName: 'impersonate_auth_token',
+        tokenDefaultName:     'default_auth_token',
+        tokenStore:           ['localStorage', 'cookie'],
 
         // Objects
 
@@ -366,29 +481,33 @@ module.exports = function () {
         forbiddenRedirect:  {path: '/403'},
         notFoundRedirect:   {path: '/404'},
 
-        registerData:       {url: 'auth/register',     method: 'POST', redirect: '/login'},
-        loginData:          {url: 'auth/login',        method: 'POST', redirect: '/', fetchUser: true},
-        logoutData:         {url: 'auth/logout',       method: 'POST', redirect: '/', makeRequest: false},
-        oauth1Data:         {url: 'auth/login',        method: 'POST'},
-        fetchData:          {url: 'auth/user',         method: 'GET', enabled: true},
-        refreshData:        {url: 'auth/refresh',      method: 'GET', enabled: true},
-        loginOtherData:     {url: 'auth/login-other',  method: 'POST', redirect: '/'},
-        logoutOtherData:    {url: 'auth/logout-other', method: 'POST', redirect: '/admin', makeRequest: false},
+        registerData:       {url: 'auth/register',      method: 'POST', redirect: '/login'},
+        loginData:          {url: 'auth/login',         method: 'POST', redirect: '/', fetchUser: true},
+        logoutData:         {url: 'auth/logout',        method: 'POST', redirect: '/', makeRequest: false},
+        oauth1Data:         {url: 'auth/login',         method: 'POST'},
+        fetchData:          {url: 'auth/user',          method: 'GET', enabled: true},
+        refreshData:        {url: 'auth/refresh',       method: 'GET', enabled: true, interval: 30},
+        impersonateData:    {url: 'auth/impersonate',   method: 'POST', redirect: '/'},
+        unimpersonateData:  {url: 'auth/unimpersonate', method: 'POST', redirect: '/admin', makeRequest: false},
 
-        facebookData:       {url: 'auth/facebook',     method: 'POST', redirect: '/'},
-        googleData:         {url: 'auth/google',       method: 'POST', redirect: '/'},
+        facebookData:       {url: 'auth/facebook',      method: 'POST', redirect: '/'},
+        googleData:         {url: 'auth/google',        method: 'POST', redirect: '/'},
 
         facebookOauth2Data: {
             url: 'https://www.facebook.com/v2.5/dialog/oauth',
-            redirect: function () { return this.options.getUrl() + '/login/facebook'; },
-            clientId: '',
-            scope: 'email'
+            params: {
+                client_id: '',
+                redirect_uri: function () { return this.options.getUrl() + '/login/facebook'; },
+                scope: 'email'
+            }
         },
         googleOauth2Data: {
             url: 'https://accounts.google.com/o/oauth2/auth',
-            redirect: function () { return this.options.getUrl() + '/login/google'; },
-            clientId: '',
-            scope: 'https://www.googleapis.com/auth/plus.me https://www.googleapis.com/auth/plus.login https://www.googleapis.com/auth/plus.profile.emails.read'
+            params: {
+                client_id: '',
+                redirect_uri: function () { return this.options.getUrl() + '/login/google'; },
+                scope: 'https://www.googleapis.com/auth/plus.me https://www.googleapis.com/auth/plus.login https://www.googleapis.com/auth/plus.profile.emails.read'
+            }
         },
 
         // Internal
@@ -399,6 +518,11 @@ module.exports = function () {
         parseOauthState:    _parseOauthState,
         tokenExpired:       _tokenExpired,
         check:              _check,
+        checkAuthenticated: _checkAuthenticated,
+        getAuthMeta:        _getAuthMeta,
+        setTransitions:     _setTransitions,
+
+        readyCallback:      null,
 
         transitionEach:     _transitionEach,
         routerBeforeEach:   _routerBeforeEach,
@@ -422,17 +546,20 @@ module.exports = function () {
         refreshPerform:     _refreshPerform,
         refreshProcess:     _refreshProcess,
 
-        loginOtherPerform:  _loginOtherPerform,
-        loginOtherProcess:  _loginOtherProcess,
+        impersonatePerform:  _impersonatePerform,
+        impersonateProcess:  _impersonateProcess,
 
-        logoutOtherPerform: _logoutOtherPerform,
-        logoutOtherProcess: _logoutOtherProcess,
+        unimpersonatePerform: _unimpersonatePerform,
+        unimpersonateProcess: _unimpersonateProcess,
 
         oauth2Perform:      _oauth2Perform
     };
 
     function Auth(Vue, options) {
-        var i, ii, msg, drivers = ['auth', 'http', 'router'];
+        var i, ii,
+            msg,
+            _this = this,
+            drivers = ['auth', 'http', 'router'];
 
         this.currentToken = null;
 
@@ -447,9 +574,18 @@ module.exports = function () {
                     redirect: null,
                     authenticated: null
                 };
+            },
+
+            watch: {
+                loaded: function (val) {
+                    if (val === true && _this.options.readyCallback) {
+                        _this.options.readyCallback();
+                    }
+                }
             }
         });
 
+        // Check drivers.
         for (i = 0, ii = drivers.length; i < ii; i++) {
             if ( ! this.options[drivers[i]]) {
                 console.error('Error (@websanova/vue-auth): "' + drivers[i] + '" driver must be set.');
@@ -466,13 +602,26 @@ module.exports = function () {
             }
         }
 
+        // Set refresh interval.
+        if (this.options.refreshData.interval && this.options.refreshData.interval > 0) {
+            setInterval(function () {
+                if (this.options.refreshData.enabled && !this.options.tokenExpired.call(this)) {
+                    this.options.refreshPerform.call(this, {});
+                }
+            }.bind(this), this.options.refreshData.interval * 1000 * 60); // In minutes.
+        }
+
         // Init interceptors.
         this.options.router._beforeEach.call(this, this.options.routerBeforeEach, this.options.transitionEach);
         this.options.http._interceptor.call(this, this.options.requestIntercept, this.options.responseIntercept);
     }
 
-    Auth.prototype.ready = function () {
-        return this.watch.loaded;
+    Auth.prototype.ready = function (cb) {
+        if (cb !== undefined) {
+            this.$auth.options.readyCallback = cb.bind(this);
+        }
+
+        return this.$auth.watch.loaded;
     };
 
     Auth.prototype.redirect = function () {
@@ -487,63 +636,67 @@ module.exports = function () {
         return this.watch.data || {};
     };
 
-    Auth.prototype.check = function (role) {
-        return this.options.check.call(this, role);
+    Auth.prototype.check = function (role, key) {
+        return this.options.check.call(this, role, key);
     };
 
-    Auth.prototype.other = function () {
+    Auth.prototype.impersonating = function () {
         this.watch.data; // To fire watch
 
-        return __token.get.call(this, 'other') ? true : false;
+        return __token.get.call(this, this.options.tokenImpersonateName) ? true : false;
     };
 
-    Auth.prototype.enableOther = function (data) {
-        if (this.other()) {
-            this.currentToken = null;
+    Auth.prototype.token = function (name, token) {
+        if (token) {
+            __token.set.call(this, name, token);
         }
-    };
 
-    Auth.prototype.disableOther = function (data) {
-        if (this.other()) {
-            this.currentToken = 'default';
-        }
-    };
-
-    Auth.prototype.token = function (name) {
         return __token.get.call(this, name);
     };
 
     Auth.prototype.fetch = function (data) {
-        __bindContext.call(this, 'fetch', data);
+        return __bindContext.call(this, 'fetch', data);
     };
 
     Auth.prototype.refresh = function (data) {
-        __bindContext.call(this, 'refresh', data);
+        return __bindContext.call(this, 'refresh', data);
     };
 
     Auth.prototype.register = function (data) {
-        __bindContext.call(this, 'register', data);
+        return __bindContext.call(this, 'register', data);
     };
 
     Auth.prototype.login = function (data) {
-        __bindContext.call(this, 'login', data);
+        return __bindContext.call(this, 'login', data);
     };
 
     Auth.prototype.logout = function (data) {
-        __bindContext.call(this, 'logout', data);
+        return __bindContext.call(this, 'logout', data);
     };
 
-    Auth.prototype.loginOther = function (data) {
-        __bindContext.call(this, 'loginOther', data);
+    Auth.prototype.impersonate = function (data) {
+        return __bindContext.call(this, 'impersonate', data);
     };
 
-    Auth.prototype.logoutOther = function (data) {
-        __bindContext.call(this, 'logoutOther', data);
+    Auth.prototype.unimpersonate = function (data) {
+        return __bindContext.call(this, 'unimpersonate', data);
     };
 
     Auth.prototype.oauth2 = function (data) {
-        __bindContext.call(this, 'oauth2', data);
+        return __bindContext.call(this, 'oauth2', data);
     }
+
+    Auth.prototype.enableImpersonate = function () {
+        if (this.impersonating()) {
+            this.currentToken = null;
+        }
+    };
+
+    Auth.prototype.disableImpersonate = function () {
+        if (this.impersonating()) {
+            this.currentToken = this.options.tokenDefaultName;
+        }
+    };
 
     return Auth;
 };
